@@ -26,56 +26,87 @@ ifeq ($(WHICHFILE),true)
 $(info Processing $(lastword $(MAKEFILE_LIST)))
 endif
 
+# Set the default build recipe for this board if not set by the user
+include $(dir $(lastword $(MAKEFILE_LIST)))/locate_recipe.mk
+
 # MCU device selection
-DEVICE:=CYB0644ABZI-S2D44
+DEVICE:=CYS0644ABZI-S2D44
 # Additional devices on the board
 ADDITIONAL_DEVICES:=CYW4343WKUBG
 # Default target core to CM4 if not already set
 CORE?=CM4
+# Basic architecture specific components
+COMPONENTS+=CAT1A
 # Define default type of bootloading method [single, dual]
-# single -> CM4 only, dual -> CM0 and CM4
-SECURE_CORE_MODE=single
+# single -> CM4 only, multi -> CM0 and CM4
+SECURE_BOOT_STAGE?=single
 
 ifeq ($(CORE),CM4)
 # Additional components supported by the target
 COMPONENTS+=BSP_DESIGN_MODUS PSOC6HAL 4343W
+#Add secure CM0P image in single stage
+ifeq ($(SECURE_BOOT_STAGE), single)
+COMPONENTS+=CM0P_SECURE
+endif
+
 # Use CyHAL
 DEFINES+=CY_USING_HAL
 
-ifeq ($(SECURE_CORE_MODE),single)
-CY_LINKERSCRIPT_SUFFIX=cm4
-CY_SECURE_POLICY_NAME=policy_single_stage_CM4
-else
+ifeq ($(SECURE_BOOT_STAGE),single)
 CY_LINKERSCRIPT_SUFFIX=cm4_dual
-CY_SECURE_POLICY_NAME=policy_dual_stage_CM0p_CM4
+CY_SECURE_POLICY_NAME?=policy_single_CM0_CM4
+else
+CY_LINKERSCRIPT_SUFFIX=cm4
+CY_SECURE_POLICY_NAME?=policy_multi_CM0_CM4
 endif
 
 else
-CY_SECURE_POLICY_NAME=policy_dual_stage_CM0p_CM4
+CY_SECURE_POLICY_NAME?=policy_multi_CM0_CM4
+endif
+
+#Define the toolchain path
+ifeq ($(TOOLCHAIN),ARM)
+TOOLCHAIN_PATH=$(CY_COMPILER_ARM_DIR)
+else
+TOOLCHAIN_PATH=$(CY_COMPILER_GCC_ARM_DIR)
 endif
 
 # Python path definition
+CY_PYTHON_REQUIREMENT=true
+
+# Check if CM0P Library exists
+POST_BUILD_CM0_LIB_PATH=$(call CY_MACRO_FINDLIB,psoc6cm0p)
+ifeq ($(POST_BUILD_CM0_LIB_PATH), NotPresent)
+# Backward compatibility, try hard-coded paths instead
+POST_BUILD_CM0_LIB_PATH=$(CY_INTERNAL_APPLOC)/libs/psoc6cm0p/COMPONENT_CM0P_SECURE
+endif
+
+# Check if Target BSP Library exists
+POST_BUILD_BSP_LIB_PATH_INTERNAL=$(call CY_MACRO_FINDLIB,TARGET_CY8CKIT-064S0S2-4343W)
+ifeq ($(POST_BUILD_BSP_LIB_PATH_INTERNAL), NotPresent)
+# Backward compatibility, try hard-coded paths instead
+POST_BUILD_BSP_LIB_PATH_INTERNAL=$(CY_TARGET_DIR)
+endif
+
 ifeq ($(OS),Windows_NT)
-CY_PYTHON_PATH?=python
+ifneq ($(CY_WHICH_CYGPATH),)
+POST_BUILD_BSP_LIB_PATH=$(shell cygpath -m --absolute $(POST_BUILD_BSP_LIB_PATH_INTERNAL))
 else
-CY_PYTHON_PATH?=python3
+POST_BUILD_BSP_LIB_PATH=$(abspath $(POST_BUILD_BSP_LIB_PATH_INTERNAL))
+endif
+else
+POST_BUILD_BSP_LIB_PATH=$(abspath $(POST_BUILD_BSP_LIB_PATH_INTERNAL))
 endif
 
 # BSP-specific post-build action
-# CySecureTools Image ID for CM4 Applications is 16 in case of multi-stage, 4 for single-stage,
-# Image ID for CM0 Applications is always 1
-ifeq ($(CORE), CM4)
-ifeq ($(SECURE_CORE_MODE), single)
-CY_BSP_POSTBUILD=$(CY_PYTHON_PATH) -c "import cysecuretools; \
-	tools = cysecuretools.CySecureTools('cy8ckit-064s0s2-4343w', 'policy/$(CY_SECURE_POLICY_NAME).json'); \
-	tools.sign_image('$(CY_CONFIG_DIR)/$(APPNAME).hex',4);"
-else
-CY_BSP_POSTBUILD=$(CY_PYTHON_PATH) -c "import cysecuretools; \
-	tools = cysecuretools.CySecureTools('cy8ckit-064s0s2-4343w', 'policy/$(CY_SECURE_POLICY_NAME).json'); \
-	tools.sign_image('$(CY_CONFIG_DIR)/$(APPNAME).hex',16);"
-endif
-else
-CY_BSP_POSTBUILD=$(CY_PYTHON_PATH) -c "import cysecuretools; \
-	tools = cysecuretools.CySecureTools('cy8ckit-064s0s2-4343w', 'policy/$(CY_SECURE_POLICY_NAME).json'); \
-	tools.sign_image('$(CY_CONFIG_DIR)/$(APPNAME).hex',1);"
-endif
+CY_BSP_POSTBUILD=$(CY_PYTHON_PATH) $(POST_BUILD_BSP_LIB_PATH)/psoc64_postbuild.py \
+				--core $(CORE) \
+				--secure-boot-stage $(SECURE_BOOT_STAGE) \
+				--policy $(CY_SECURE_POLICY_NAME) \
+				--target cys06xxa \
+				--toolchain-path $(TOOLCHAIN_PATH) \
+				--toolchain $(TOOLCHAIN) \
+				--build-dir $(CY_CONFIG_DIR) \
+				--app-name $(APPNAME) \
+				--cm0-app-path $(POST_BUILD_CM0_LIB_PATH) \
+				--cm0-app-name psoc6_02_cm0p_secure
