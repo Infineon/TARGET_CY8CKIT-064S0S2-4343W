@@ -1,6 +1,6 @@
 /***************************************************************************//**
-* \file cyb06xxa_cm4_dual.ld
-* \version 2.90.1
+* \file cys06xxa_cm4.ld
+* \version 2.91
 *
 * Linker file for the GNU C compiler.
 *
@@ -8,7 +8,7 @@
 * input files should be mapped into the output file, and to control the memory
 * layout of the output file.
 *
-* \note The entry point location is fixed and starts at 0x10000000. The valid
+* \note The entry point location is fixed and starts at 0x10050000. The valid
 * application image should be placed there.
 *
 * \note The linker files included with the PDL template projects must be generic
@@ -19,7 +19,7 @@
 *
 ********************************************************************************
 * \copyright
-* Copyright 2016-2020 Cypress Semiconductor Corporation
+* Copyright 2016-2021 Cypress Semiconductor Corporation
 * SPDX-License-Identifier: Apache-2.0
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
@@ -46,9 +46,6 @@ STACK_SIZE = 0x1000;
 /* The size of the MCU boot header area at the start of FLASH */
 BOOT_HEADER_SIZE = 0x400;
 
-/* The size of the Cortex-M0+ application image (including MCU boot header area) */
-FLASH_CM0P_SIZE  = 0x10000;
-
 /* Force symbol to be entered in the output file as an undefined symbol. Doing
 * this may, for example, trigger linking of additional modules from standard
 * libraries. You may list several symbols for each EXTERN, and you may use
@@ -63,12 +60,9 @@ EXTERN(Reset_Handler)
 MEMORY
 {
     /* The ram and flash regions control RAM and flash memory allocation for the CM4 core.
-     * You can change the memory allocation by editing the 'ram' and 'flash' regions.
-     * Your changes must be aligned with the corresponding memory regions for CM0+ core in 'xx_cm0plus.ld',
-     * where 'xx' is the device group; for example, 'cyb06xx7_cm0plus.ld'.
      */
-    ram               (rwx)   : ORIGIN = 0x08001800, LENGTH = 0xDE800
-    flash             (rx)    : ORIGIN = 0x10000000, LENGTH = 0xE8000
+    ram               (rwx)   : ORIGIN = 0x08030000, LENGTH = 0xB7000
+    flash             (rx)    : ORIGIN = 0x10050000, LENGTH = 0x11C000
 
     /* This is a 32K flash region used for EEPROM emulation. This region can also be used as the general purpose flash.
      * You can assign sections to this memory region for only one of the cores.
@@ -78,13 +72,7 @@ MEMORY
     em_eeprom         (rx)    : ORIGIN = 0x14000000, LENGTH = 0x8000       /*  32 KB */
 
     /* The following regions define device specific memory regions and must not be changed. */
-    sflash_user_data  (rx)    : ORIGIN = 0x16000800, LENGTH = 0x800        /* Supervisory flash: User data */
-    sflash_nar        (rx)    : ORIGIN = 0x16001A00, LENGTH = 0x200        /* Supervisory flash: Normal Access Restrictions (NAR) */
-    sflash_public_key (rx)    : ORIGIN = 0x16005A00, LENGTH = 0xC00        /* Supervisory flash: Public Key */
-    sflash_toc_2      (rx)    : ORIGIN = 0x16007C00, LENGTH = 0x200        /* Supervisory flash: Table of Content # 2 */
-    sflash_rtoc_2     (rx)    : ORIGIN = 0x16007E00, LENGTH = 0x200        /* Supervisory flash: Table of Content # 2 Copy */
     xip               (rx)    : ORIGIN = 0x18000000, LENGTH = 0x8000000    /* 128 MB */
-    efuse             (r)     : ORIGIN = 0x90700000, LENGTH = 0x100000     /*   1 MB */
 }
 
 /* Library configurations */
@@ -126,21 +114,10 @@ GROUP(libgcc.a libc.a libm.a libnosys.a)
 
 SECTIONS
 {
-     /* Cortex-M0+ application flash image area */
-    .cy_m0p_image ORIGIN(flash) + BOOT_HEADER_SIZE :
-    {
-        . = ALIGN(4);
-        __cy_m0p_code_start = . ;
-        KEEP(*(.cy_m0p_image))
-        __cy_m0p_code_end = . ;
-    } > flash
-
-    /* Check if .cy_m0p_image size exceeds FLASH_CM0P_SIZE */
-    ASSERT(__cy_m0p_code_end <= ORIGIN(flash) + FLASH_CM0P_SIZE, "CM0+ flash image overflows with CM4, increase FLASH_CM0P_SIZE")
-
     /* Cortex-M4 application flash area */
-    .text ORIGIN(flash) + FLASH_CM0P_SIZE :
+    .text ORIGIN(flash) + BOOT_HEADER_SIZE :
     {
+        /* Cortex-M4 flash vector table */
         . = ALIGN(4);
         __Vectors = . ;
         KEEP(*(.vectors))
@@ -235,8 +212,9 @@ SECTIONS
     } > ram
 
 
-    .data __ram_vectors_end__ : AT (__etext)
+    .data __ram_vectors_end__ :
     {
+        . = ALIGN(4);
         __data_start__ = .;
 
         *(vtable)
@@ -270,7 +248,7 @@ SECTIONS
 
         __data_end__ = .;
 
-    } > ram
+    } > ram AT>flash
 
 
     /* Place variables in the section that should not be initialized during the
@@ -350,41 +328,6 @@ SECTIONS
     } > em_eeprom
 
 
-    /* Supervisory Flash: User data */
-    .cy_sflash_user_data :
-    {
-        KEEP(*(.cy_sflash_user_data))
-    } > sflash_user_data
-
-
-    /* Supervisory Flash: Normal Access Restrictions (NAR) */
-    .cy_sflash_nar :
-    {
-        KEEP(*(.cy_sflash_nar))
-    } > sflash_nar
-
-
-    /* Supervisory Flash: Public Key */
-    .cy_sflash_public_key :
-    {
-        KEEP(*(.cy_sflash_public_key))
-    } > sflash_public_key
-
-
-    /* Supervisory Flash: Table of Content # 2 */
-    .cy_toc_part2 :
-    {
-        KEEP(*(.cy_toc_part2))
-    } > sflash_toc_2
-
-
-    /* Supervisory Flash: Table of Content # 2 Copy */
-    .cy_rtoc_part2 :
-    {
-        KEEP(*(.cy_rtoc_part2))
-    } > sflash_rtoc_2
-
-
     /* Places the code in the Execute in Place (XIP) section. See the smif driver
     *  documentation for details.
     */
@@ -396,44 +339,7 @@ SECTIONS
     } > xip
 
 
-    /* eFuse */
-    .cy_efuse :
-    {
-        KEEP(*(.cy_efuse))
-    } > efuse
-
-
-    /* These sections are used for additional metadata (silicon revision,
-    *  Silicon/JTAG ID, etc.) storage.
-    */
-    .cymeta         0x90500000 : { KEEP(*(.cymeta)) } :NONE
 }
 
-
-/* The following symbols used by the cymcuelftool. */
-/* Flash */
-__cy_memory_0_start    = 0x10000000;
-__cy_memory_0_length   = 0x001D0000;
-__cy_memory_0_row_size = 0x200;
-
-/* Emulated EEPROM Flash area */
-__cy_memory_1_start    = 0x14000000;
-__cy_memory_1_length   = 0x8000;
-__cy_memory_1_row_size = 0x200;
-
-/* Supervisory Flash */
-__cy_memory_2_start    = 0x16000000;
-__cy_memory_2_length   = 0x8000;
-__cy_memory_2_row_size = 0x200;
-
-/* XIP */
-__cy_memory_3_start    = 0x18000000;
-__cy_memory_3_length   = 0x08000000;
-__cy_memory_3_row_size = 0x200;
-
-/* eFuse */
-__cy_memory_4_start    = 0x90700000;
-__cy_memory_4_length   = 0x100000;
-__cy_memory_4_row_size = 1;
 
 /* EOF */

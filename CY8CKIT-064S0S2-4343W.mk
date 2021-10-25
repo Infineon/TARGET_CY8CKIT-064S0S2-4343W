@@ -6,7 +6,9 @@
 #
 ################################################################################
 # \copyright
-# Copyright 2018-2021 Cypress Semiconductor Corporation
+# Copyright 2018-2021 Cypress Semiconductor Corporation (an Infineon company) or
+# an affiliate of Cypress Semiconductor Corporation
+#
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,7 +32,7 @@ endif
 include $(dir $(lastword $(MAKEFILE_LIST)))/locate_recipe.mk
 
 # MCU device selection
-#    Changing the device should be done using “make bsp” or “make update_bsp” with the “DEVICE_GEN”
+#    Changing the device should be done using "make bsp" or "make update_bsp" with the "DEVICE_GEN"
 #    variable set to the new MCU. If you change the device manually here you must also update the
 #    design.modus file and re-run the device configurator.
 DEVICE:=CYS0644ABZI-S2D44
@@ -43,9 +45,14 @@ ADDITIONAL_DEVICES:=CYW4343WKUBG
 CORE?=CM4
 # Basic architecture specific components
 COMPONENTS+=$(TARGET) CAT1 CAT1A
-# Define default type of bootloading method [single, dual]
-# single -> CM4 only, multi -> CM0 and CM4
-SECURE_BOOT_STAGE?=single
+
+# Define the toolchain path. Note GCC_ARM is used for IAR in order to access
+# objcopy tool for hex file creation.
+ifeq ($(TOOLCHAIN),ARM)
+TOOLCHAIN_PATH=$(CY_COMPILER_ARM_DIR)
+else
+TOOLCHAIN_PATH=$(CY_COMPILER_GCC_ARM_DIR)
+endif
 
 # Python path definition
 CY_PYTHON_REQUIREMENT=true
@@ -59,59 +66,33 @@ endif
 
 ifeq ($(CORE),CM4)
 # Additional components supported by the target
-COMPONENTS+=BSP_DESIGN_MODUS PSOC6HAL 4343W WLBGA
-#Add secure CM0P image in single stage
-ifeq ($(SECURE_BOOT_STAGE), single)
-COMPONENTS+=CM0P_SECURE
-endif
+COMPONENTS+=TFM_S_FW TFM_NS_INTERFACE BSP_DESIGN_MODUS PSOC6HAL 4343W MURATA-1DX HCI-UART
 
 # Use CyHAL
 DEFINES+=CY_USING_HAL
 
-ifeq ($(SECURE_BOOT_STAGE),single)
-CY_LINKERSCRIPT_SUFFIX=cm4_dual
-else
+# Enable Multi-Client Call feature in TF-M
+DEFINES+=TFM_MULTI_CORE_MULTI_CLIENT_CALL TFM_MULTI_CORE_NS_OS
+
 CY_LINKERSCRIPT_SUFFIX=cm4
 endif
 
-# If cysecuretools is less than 3.0.0
-ifneq ($(strip $(filter 2 1 0,$(CY_SECURE_TOOLS_MAJOR_VERSION))),)
-ifeq ($(SECURE_BOOT_STAGE),single)
-CY_SECURE_POLICY_NAME?=policy_single_CM0_CM4
-else
-CY_SECURE_POLICY_NAME?=policy_multi_CM0_CM4
-endif
-else
-ifeq ($(SECURE_BOOT_STAGE),single)
-CY_SECURE_POLICY_NAME?=policy_single_CM0_CM4_swap
-else
-CY_SECURE_POLICY_NAME?=policy_multi_CM0_CM4_swap
-endif
-endif
-
-# CM0p
-else
-
-ifneq ($(strip $(filter 2 1 0,$(CY_SECURE_TOOLS_MAJOR_VERSION))),)
-CY_SECURE_POLICY_NAME?=policy_multi_CM0_CM4
-else
-CY_SECURE_POLICY_NAME?=policy_multi_CM0_CM4_swap
-endif
-
-endif
-
-#Define the toolchain path
-ifeq ($(TOOLCHAIN),ARM)
-TOOLCHAIN_PATH=$(CY_COMPILER_ARM_DIR)
-else
-TOOLCHAIN_PATH=$(CY_COMPILER_GCC_ARM_DIR)
-endif
-
-# Check if CM0P Library exists
-POST_BUILD_CM0_LIB_PATH=$(call CY_MACRO_FINDLIB,psoc6cm0p)
-ifeq ($(POST_BUILD_CM0_LIB_PATH), NotPresent)
+# Trusted Firmware-M Library Path
+TRUSTED_FIRMWARE_M_PATH?=$(call CY_MACRO_FINDLIB,trusted-firmware-m)
+ifeq ($(TRUSTED_FIRMWARE_M_PATH), NotPresent)
 # Backward compatibility, try hard-coded paths instead
-POST_BUILD_CM0_LIB_PATH=$(CY_INTERNAL_APPLOC)/libs/psoc6cm0p/COMPONENT_CM0P_SECURE
+TRUSTED_FIRMWARE_M_PATH=$(CY_INTERNAL_APPLOC)/libs/trusted-firmware-m
+endif
+
+# Post build parameters
+SECURE_BOOT_STAGE=multi
+POST_BUILD_CM0_NAME?=tfm_s
+POST_BUILD_CM0_LIB_PATH?=$(TRUSTED_FIRMWARE_M_PATH)/COMPONENT_TFM_S_FW
+POST_BUILD_POLICY_PATH?=$(TRUSTED_FIRMWARE_M_PATH)/security/policy
+ifeq ($(BOARD_TYPE),ES100)
+CY_SECURE_POLICY_NAME?=policy_multi_CM0_CM4_tfm_es100
+else
+CY_SECURE_POLICY_NAME?=policy_multi_CM0_CM4_tfm
 endif
 
 # Check if Target BSP Library exists
@@ -124,22 +105,29 @@ endif
 ifeq ($(OS),Windows_NT)
 ifneq ($(CY_WHICH_CYGPATH),)
 POST_BUILD_BSP_LIB_PATH=$(shell cygpath -m --absolute $(POST_BUILD_BSP_LIB_PATH_INTERNAL))
+POST_BUILD_CM0_LIB_PATH_ABS=$(shell cygpath -m --absolute $(POST_BUILD_CM0_LIB_PATH))
+POST_BUILD_POLICY_PATH_ABS=$(shell cygpath -m --absolute $(POST_BUILD_POLICY_PATH))
 else
 POST_BUILD_BSP_LIB_PATH=$(abspath $(POST_BUILD_BSP_LIB_PATH_INTERNAL))
+POST_BUILD_CM0_LIB_PATH_ABS=$(abspath $(POST_BUILD_CM0_LIB_PATH))
+POST_BUILD_POLICY_PATH_ABS=$(abspath $(POST_BUILD_POLICY_PATH))
 endif
 else
 POST_BUILD_BSP_LIB_PATH=$(abspath $(POST_BUILD_BSP_LIB_PATH_INTERNAL))
+POST_BUILD_CM0_LIB_PATH_ABS=$(abspath $(POST_BUILD_CM0_LIB_PATH))
+POST_BUILD_POLICY_PATH_ABS=$(abspath $(POST_BUILD_POLICY_PATH))
 endif
 
 # BSP-specific post-build action
 CY_BSP_POSTBUILD=$(CY_PYTHON_PATH) $(POST_BUILD_BSP_LIB_PATH)/psoc64_postbuild.py \
 				--core $(CORE) \
 				--secure-boot-stage $(SECURE_BOOT_STAGE) \
+				--policy-path $(POST_BUILD_POLICY_PATH_ABS) \
 				--policy $(CY_SECURE_POLICY_NAME) \
 				--target cys06xxa \
 				--toolchain-path $(TOOLCHAIN_PATH) \
 				--toolchain $(TOOLCHAIN) \
 				--build-dir $(CY_CONFIG_DIR) \
 				--app-name $(APPNAME) \
-				--cm0-app-path $(POST_BUILD_CM0_LIB_PATH) \
-				--cm0-app-name psoc6_02_cm0p_secure
+				--cm0-app-path $(POST_BUILD_CM0_LIB_PATH_ABS) \
+				--cm0-app-name $(POST_BUILD_CM0_NAME)
