@@ -1,0 +1,7 @@
+capsense
+core-lib
+core-make
+mtb-hal-cat1
+mtb-pdl-cat1
+trusted-firmware-m
+recipe-make-cat1a
